@@ -34,10 +34,10 @@ p3-field = { workspace = true }
 p3-baby-bear = { workspace = true }
 p3-symmetric = { workspace = true }
 p3-util = { workspace = true }
+p3-challenger = { workspace = true }
 sp1-prover = { workspace = true }
 sp1-stark = { workspace = true }
 sp1-primitives = { workspace = true }
-sp1-recursion-core = { workspace = true }
 itertools = { workspace = true }
 bincode = "1.3"
 

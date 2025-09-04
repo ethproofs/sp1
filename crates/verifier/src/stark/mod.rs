@@ -2,19 +2,12 @@ extern crate alloc;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 
-use core::convert::AsRef;
 use error::StarkError;
-use p3_baby_bear::BabyBear;
-use p3_commit::{Pcs, TwoAdicMultiplicativeCoset};
-use p3_field::{AbstractField, TwoAdicField};
 use serde::{Deserialize, Serialize};
-use sp1_primitives::poseidon2_hash;
 use sp1_stark::{
     baby_bear_poseidon2::BabyBearPoseidon2, Dom, ShardProof, StarkGenericConfig, StarkVerifyingKey,
-    DIGEST_SIZE,
 };
 use strum_macros::{EnumDiscriminants, EnumTryAs};
-use verify::verify_stark_compressed_proof;
 
 pub mod error;
 mod verify;
@@ -28,7 +21,9 @@ pub type InnerSC = BabyBearPoseidon2;
 /// An intermediate proof which proves the execution.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "ShardProof<SC>: Serialize, Dom<SC>: Serialize"))]
-#[serde(bound(deserialize = "ShardProof<SC>: serde::de::DeserializeOwned, Dom<SC>: serde::de::DeserializeOwned"))]
+#[serde(bound(
+    deserialize = "ShardProof<SC>: serde::de::DeserializeOwned, Dom<SC>: serde::de::DeserializeOwned"
+))]
 pub struct SP1ReduceProof<SC: StarkGenericConfig> {
     /// The compress verifying key associated with the proof.
     pub vk: StarkVerifyingKey<SC>,
@@ -90,11 +85,6 @@ pub struct SP1VerifyingKey {
     pub vk: StarkVerifyingKey<CoreSC>,
 }
 
-pub trait HashableKey {
-    /// Hash the key into a digest of BabyBear elements.
-    fn hash_babybear(&self) -> [BabyBear; DIGEST_SIZE];
-}
-
 /// A STARK verifier for SP1 proofs.
 pub struct StarkVerifier;
 
@@ -106,48 +96,15 @@ impl StarkVerifier {
     /// * `proof` - The proof bytes.
     /// * `sp1_vk` - The SP1 verifying key bytes.
     ///
-    /// Compared to `verify()`, it does not perform a consistency check between
-    /// user-supplied public values and those committed in the proof.
-    pub fn verify_proof(proof: &[u8], sp1_vk: &[u8]) -> Result<(), StarkError> {
+    /// # Returns
+    ///
+    /// A success [`Result`] if verification succeeds, or a [`StarkError`] if verification fails.
+    pub fn verify(proof: &[u8], sp1_vk: &[u8]) -> Result<(), StarkError> {
         let proof: SP1Proof = bincode::deserialize(proof).expect("failed to deserialize the proof");
         let SP1Proof::Compressed(proof) = proof else { panic!("expected a compressed proof") };
         let vk: SP1VerifyingKey =
             bincode::deserialize(sp1_vk).expect("failed to deserialize the vk");
 
-        verify_stark_compressed_proof(&vk, &proof).map_err(StarkError::Recursion)
-    }
-}
-
-impl<SC: StarkGenericConfig<Val = BabyBear, Domain = TwoAdicMultiplicativeCoset<BabyBear>>>
-    HashableKey for StarkVerifyingKey<SC>
-where
-    <SC::Pcs as Pcs<SC::Challenge, SC::Challenger>>::Commitment: AsRef<[BabyBear; DIGEST_SIZE]>,
-{
-    fn hash_babybear(&self) -> [BabyBear; DIGEST_SIZE] {
-        let mut num_inputs = DIGEST_SIZE + 1 + 14 + (7 * self.chip_information.len());
-        for (name, _, _) in self.chip_information.iter() {
-            num_inputs += name.len();
-        }
-        let mut inputs = Vec::with_capacity(num_inputs);
-        inputs.extend(self.commit.as_ref());
-        inputs.push(self.pc_start);
-        inputs.extend(self.initial_global_cumulative_sum.0.x.0);
-        inputs.extend(self.initial_global_cumulative_sum.0.y.0);
-        for (name, domain, dimension) in self.chip_information.iter() {
-            inputs.push(BabyBear::from_canonical_usize(domain.log_n));
-            let size = 1 << domain.log_n;
-            inputs.push(BabyBear::from_canonical_usize(size));
-            let g = BabyBear::two_adic_generator(domain.log_n);
-            inputs.push(domain.shift);
-            inputs.push(g);
-            inputs.push(BabyBear::from_canonical_usize(dimension.width));
-            inputs.push(BabyBear::from_canonical_usize(dimension.height));
-            inputs.push(BabyBear::from_canonical_usize(name.len()));
-            for byte in name.as_bytes() {
-                inputs.push(BabyBear::from_canonical_u8(*byte));
-            }
-        }
-
-        poseidon2_hash(inputs)
+        verify::verify_compressed_algebraic(&proof, &vk)
     }
 }
